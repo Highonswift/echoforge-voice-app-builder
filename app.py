@@ -9,7 +9,7 @@ load_dotenv()
 
 app = Flask(__name__)
 
-app.config['SECRET_KEY'] = os.urandom(24)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'a-fallback-secret-key-for-local-dev')
 UPLOAD_FOLDER = '/tmp/uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -23,7 +23,6 @@ def login():
 @app.route('/save-keys', methods=['POST'])
 def save_keys():
     session['TENWEB_API_KEY'] = request.form.get('tenweb_api_key')
-    print(f"[DEBUG] In /save-keys, session is: {session}")
     return redirect(url_for('home'))
 
 def transcribe_audio_with_deepgram(audio_file_path, api_key):
@@ -37,7 +36,6 @@ def transcribe_audio_with_deepgram(audio_file_path, api_key):
             response.raise_for_status()
             result = response.json()
             transcript = result['results']['channels'][0]['alternatives'][0]['transcript']
-            print(f"Successfully transcribed audio: '{transcript}'")
             return transcript, None
     except Exception as e:
         print(f"An error during transcription: {e}")
@@ -60,17 +58,14 @@ def create_blank_website(prompt, api_key):
         "admin_password": f"AdminPass!{str(uuid.uuid4())[:6]}"
     }
     try:
-        print(f"Sending request to 10web to create blank website with title: '{body['site_title']}'")
         response = requests.post(api_url, headers=headers, json=body)
         response.raise_for_status()
         data = response.json().get('data', {})
         website_id = data.get('website_id')
         site_url = data.get('site_url')
         if website_id and site_url:
-            print(f"Successfully created blank website. ID: {website_id}, URL: {site_url}")
             return {'website_id': website_id, 'site_url': site_url}, None
         else:
-            print(f"10web response did not contain website_id or site_url. Response: {data}")
             return None, "Could not retrieve website details from 10Web."
     except requests.exceptions.RequestException as e:
         print(f"Error calling 10web create API: {e}")
@@ -88,10 +83,8 @@ def start_ai_generation(website_id, prompt, api_key):
         "business_description": prompt
     }
     try:
-        print(f"Sending request to start AI generation for website {website_id}.")
         response = requests.post(api_url, headers=headers, json=body)
         response.raise_for_status()
-        print("Successfully triggered AI generation.")
         return True, None
     except requests.exceptions.RequestException as e:
         print(f"Error calling AI generation API: {e}")
@@ -99,15 +92,12 @@ def start_ai_generation(website_id, prompt, api_key):
 
 @app.route('/home')
 def home():
-    print(f"[DEBUG] In /home, session is: {session}")
     if 'TENWEB_API_KEY' not in session:
         return redirect(url_for('login'))
     return render_template('index.html')
 
 @app.route('/process-audio', methods=['POST'])
 def process_audio():
-    print(f"[DEBUG] In /process-audio, session is: {session}")
-    # Deepgram key from environment, 10Web key from session
     deepgram_api_key = os.getenv('DEEPGRAM_API_KEY')
     tenweb_api_key = session.get('TENWEB_API_KEY')
 
