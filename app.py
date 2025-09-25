@@ -23,6 +23,7 @@ def login():
 @app.route('/save-keys', methods=['POST'])
 def save_keys():
     session['TENWEB_API_KEY'] = request.form.get('tenweb_api_key')
+    print(f"[DEBUG] In /save-keys, session is: {session}")
     return redirect(url_for('home'))
 
 def transcribe_audio_with_deepgram(audio_file_path, api_key):
@@ -98,12 +99,15 @@ def start_ai_generation(website_id, prompt, api_key):
 
 @app.route('/home')
 def home():
+    print(f"[DEBUG] In /home, session is: {session}")
     if 'TENWEB_API_KEY' not in session:
         return redirect(url_for('login'))
     return render_template('index.html')
 
 @app.route('/process-audio', methods=['POST'])
 def process_audio():
+    print(f"[DEBUG] In /process-audio, session is: {session}")
+    # Deepgram key from environment, 10Web key from session
     deepgram_api_key = os.getenv('DEEPGRAM_API_KEY')
     tenweb_api_key = session.get('TENWEB_API_KEY')
 
