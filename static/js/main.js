@@ -1,11 +1,12 @@
-// static/js/main.js
 document.addEventListener('DOMContentLoaded', () => {
+    if (window.location.pathname !== '/home') {
+        return;
+    }
+
     const recordButton = document.getElementById('recordButton');
     const statusText = document.getElementById('statusText');
     const resultsDiv = document.getElementById('results');
     const websiteLink = document.getElementById('websiteLink');
-
-    // *** NEW ELEMENT SELECTORS ***
     const transcriptionContainer = document.getElementById('transcription-container');
     const transcriptionText = document.getElementById('transcriptionText');
 
@@ -18,13 +19,8 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             mediaRecorder = new MediaRecorder(stream);
-
-            mediaRecorder.ondataavailable = event => {
-                audioChunks.push(event.data);
-            };
-
+            mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
             mediaRecorder.onstop = sendAudioToServer;
-
             mediaRecorder.start();
             isRecording = true;
             updateUIForRecording();
@@ -42,7 +38,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-
     const sendAudioToServer = async () => {
         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
         const formData = new FormData();
@@ -54,37 +49,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: formData,
             });
 
-            if (!response.ok) {
-                throw new Error(`Server error: ${response.statusText}`);
-            }
-
-            // *** MODIFICATION HERE ***
-            // Destructure both job_id and transcript from the response
             const data = await response.json();
 
+            if (!response.ok) {
+                throw new Error(data.error || `Server error: ${response.statusText}`);
+            }
+
             if (data.job_id && data.transcript) {
-                // 1. Display the transcript first
                 transcriptionText.textContent = `"${data.transcript}"`;
                 transcriptionContainer.classList.remove('d-none');
-
-                // 2. Start polling for the result
                 pollForStatus(data.job_id);
             } else {
-                statusText.textContent = "Error starting the build process.";
-                resetUI();
+                throw new Error(data.error || "Error starting the build process.");
             }
 
         } catch (error) {
             console.error("Error sending audio:", error);
-            statusText.textContent = "Failed to send audio to the server.";
+            // Display the specific error message to the user
+            statusText.textContent = `Error: ${error.message}`;
             resetUI();
         } finally {
-            audioChunks = []; // Clear chunks for the next recording
+            audioChunks = [];
         }
     };
 
     const pollForStatus = (jobId) => {
-        // Update status text after showing the transcript
         statusText.textContent = "EchoForge is now building your site... This may take a moment.";
         
         pollingInterval = setInterval(async () => {
@@ -92,22 +81,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 const response = await fetch(`/status/${jobId}`);
                 const data = await response.json();
 
-                if (data.status === 'completed') {
+                if (response.ok && data.status === 'completed') {
                     clearInterval(pollingInterval);
                     displayResult(data.website_url);
-                } else if (data.status === 'failed') {
+                } else if (!response.ok || data.status === 'failed') {
                     clearInterval(pollingInterval);
-                    statusText.textContent = "Sorry, there was an error building your website.";
+                    statusText.textContent = `Sorry, there was an error building your website: ${data.error || 'Unknown error'}`;
                     resetUI();
                 }
-                // If status is 'processing', the loop continues
             } catch (error) {
                 console.error("Polling error:", error);
                 clearInterval(pollingInterval);
                 statusText.textContent = "Error checking status.";
                 resetUI();
             }
-        }, 3000); // Poll every 3 seconds
+        }, 3000);
     };
 
     const updateUIForRecording = () => {
@@ -117,19 +105,17 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const updateUIForProcessing = () => {
         recordButton.classList.remove('recording');
-        recordButton.disabled = true; // Disable button while processing
+        recordButton.disabled = true;
         statusText.textContent = "Processing your request...";
     };
-
 
     const displayResult = (url) => {
         statusText.textContent = "All done! You can describe another website if you like.";
         websiteLink.href = url;
-        resultsDiv.classList.remove('d-none'); // Show the results div
-        recordButton.disabled = false; // Re-enable for another go
+        resultsDiv.classList.remove('d-none');
+        recordButton.disabled = false;
     };
     
-    // *** NEW HELPER FUNCTION ***
     const resetUI = () => {
         recordButton.disabled = false;
         transcriptionContainer.classList.add('d-none');
@@ -140,9 +126,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (isRecording) {
             stopRecording();
         } else {
-            // Reset UI for a new recording session
             transcriptionContainer.classList.add('d-none');
             resultsDiv.classList.add('d-none');
+            statusText.textContent = "Click the button and start speaking";
             startRecording();
         }
     });
