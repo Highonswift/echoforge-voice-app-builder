@@ -22,13 +22,12 @@ def login():
 
 @app.route('/save-keys', methods=['POST'])
 def save_keys():
-    session['DEEPGRAM_API_KEY'] = request.form.get('deepgram_api_key')
     session['TENWEB_API_KEY'] = request.form.get('tenweb_api_key')
     return redirect(url_for('home'))
 
 def transcribe_audio_with_deepgram(audio_file_path, api_key):
     if not api_key:
-        return None, "Deepgram API key not found in session."
+        return None, "Deepgram API key is not configured on the server."
     try:
         with open(audio_file_path, 'rb') as audio:
             headers = {'Authorization': f'Token {api_key}', 'Content-Type': 'audio/webm'}
@@ -40,9 +39,8 @@ def transcribe_audio_with_deepgram(audio_file_path, api_key):
             print(f"Successfully transcribed audio: '{transcript}'")
             return transcript, None
     except Exception as e:
-        error_message = f"An error during transcription: {e}"
-        print(error_message)
-        return None, error_message
+        print(f"An error during transcription: {e}")
+        return None, "Failed to transcribe the audio. Please check the server logs."
     finally:
         if os.path.exists(audio_file_path):
             os.remove(audio_file_path)
@@ -71,15 +69,11 @@ def create_blank_website(prompt, api_key):
             print(f"Successfully created blank website. ID: {website_id}, URL: {site_url}")
             return {'website_id': website_id, 'site_url': site_url}, None
         else:
-            error_message = f"10web response did not contain website_id or site_url. Response: {data}"
-            print(error_message)
-            return None, error_message
+            print(f"10web response did not contain website_id or site_url. Response: {data}")
+            return None, "Could not retrieve website details from 10Web."
     except requests.exceptions.RequestException as e:
-        error_message = f"Error calling 10web create API: {e}"
-        if e.response is not None:
-            error_message += f" | Response: {e.response.text}"
-        print(error_message)
-        return None, error_message
+        print(f"Error calling 10web create API: {e}")
+        return None, "Failed to create the website via 10Web API. Please check your API key and server logs."
 
 def start_ai_generation(website_id, prompt, api_key):
     if not api_key:
@@ -99,22 +93,22 @@ def start_ai_generation(website_id, prompt, api_key):
         print("Successfully triggered AI generation.")
         return True, None
     except requests.exceptions.RequestException as e:
-        error_message = f"Error calling AI generation API: {e}"
-        if e.response is not None:
-            error_message += f" | Response: {e.response.text}"
-        print(error_message)
-        return False, error_message
+        print(f"Error calling AI generation API: {e}")
+        return False, "Failed to start the AI generation process on 10Web."
 
 @app.route('/home')
 def home():
-    if 'DEEPGRAM_API_KEY' not in session or 'TENWEB_API_KEY' not in session:
+    if 'TENWEB_API_KEY' not in session:
         return redirect(url_for('login'))
     return render_template('index.html')
 
 @app.route('/process-audio', methods=['POST'])
 def process_audio():
-    if 'DEEPGRAM_API_KEY' not in session or 'TENWEB_API_KEY' not in session:
-        return jsonify({'error': 'API keys not found. Please log in again.'}), 401
+    deepgram_api_key = os.getenv('DEEPGRAM_API_KEY')
+    tenweb_api_key = session.get('TENWEB_API_KEY')
+
+    if not tenweb_api_key:
+        return jsonify({'error': '10Web API key not found. Please log in again.'}), 401
 
     if 'audio_data' not in request.files:
         return jsonify({'error': 'No audio file provided.'}), 400
@@ -123,9 +117,6 @@ def process_audio():
     filename = f"{uuid.uuid4()}.webm"
     audio_file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     audio_file.save(audio_file_path)
-
-    deepgram_api_key = session.get('DEEPGRAM_API_KEY')
-    tenweb_api_key = session.get('TENWEB_API_KEY')
 
     transcript, error = transcribe_audio_with_deepgram(audio_file_path, deepgram_api_key)
     if error: return jsonify({'error': error}), 500
