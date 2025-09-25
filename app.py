@@ -1,54 +1,23 @@
-# app.py
 import os
 import uuid
 import time
-import sqlite3
-import threading
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
 import requests
 
-# Load environment variables from .env file
 load_dotenv()
 
 app = Flask(__name__)
 
-# --- Configuration ---
-app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['DATABASE'] = 'database.db'
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+UPLOAD_FOLDER = '/tmp/uploads'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# --- API Keys ---
+jobs_db = {}
+
 DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY')
 TENWEB_API_KEY = os.getenv('TENWEB_API_KEY')
 
-# --- SQLite Database Functions ---
-def init_db():
-    conn = sqlite3.connect(app.config['DATABASE'])
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS jobs (
-            id TEXT PRIMARY KEY, transcript TEXT, status TEXT NOT NULL,
-            tenweb_task_id TEXT, website_url TEXT, created_at REAL NOT NULL
-        )
-    """)
-    # In case the DB was created with an old schema, try to add the column.
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN tenweb_task_id TEXT")
-    except sqlite3.OperationalError as e:
-        if "duplicate column name" not in str(e):
-            raise
-
-    conn.commit()
-    conn.close()
-    print("SQLite database initialized.")
-
-def get_db_connection():
-    conn = sqlite3.connect(app.config['DATABASE'])
-    conn.row_factory = sqlite3.Row
-    return conn
-
-# --- REAL DEEPGRAM API FUNCTION ---
 def transcribe_audio_with_deepgram(audio_file_path):
     if not DEEPGRAM_API_KEY:
         print("ERROR: DEEPGRAM_API_KEY not found.")
@@ -62,12 +31,14 @@ def transcribe_audio_with_deepgram(audio_file_path):
             result = response.json()
             transcript = result['results']['channels'][0]['alternatives'][0]['transcript']
             print(f"Successfully transcribed audio: '{transcript}'")
+            # Clean up the uploaded file after transcription
+            os.remove(audio_file_path)
             return transcript
     except Exception as e:
         print(f"An error during transcription: {e}")
+        if os.path.exists(audio_file_path):
+            os.remove(audio_file_path)
         return None
-
-# --- 10Web API Functions ---
 
 def create_blank_website(prompt):
     """
@@ -133,8 +104,6 @@ def start_ai_generation(website_id, prompt):
             print(f"10web error response: {e.response.text}")
         return False
 
-# --- Flask Routes ---
-
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -150,41 +119,31 @@ def process_audio():
     transcript = transcribe_audio_with_deepgram(audio_file_path)
     if not transcript: return jsonify({'error': 'Failed to transcribe audio.'}), 500
 
-    # Step 1: Create a blank website
     site_info = create_blank_website(transcript)
     if not site_info: return jsonify({'error': 'Failed to create blank website.'}), 500
     
     website_id = site_info['website_id']
     site_url = site_info['site_url']
 
-    # Step 2: Start AI generation (fire and forget)
     success = start_ai_generation(website_id, transcript)
     if not success: return jsonify({'error': 'Failed to start AI generation.'}), 500
 
-    # Since we can't poll, we'll assume success and mark as completed.
     job_id = str(uuid.uuid4())
-    conn = get_db_connection()
-    conn.execute(
-        "INSERT INTO jobs (id, transcript, status, website_url, created_at) VALUES (?, ?, ?, ?, ?)",
-        (job_id, transcript, 'completed', site_url, time.time())
-    )
-    conn.commit()
-    conn.close()
+    jobs_db[job_id] = {
+        'id': job_id,
+        'transcript': transcript,
+        'status': 'completed',
+        'website_url': site_url,
+        'created_at': time.time()
+    }
     
     return jsonify({'job_id': job_id, 'transcript': transcript})
 
 @app.route('/status/<job_id>', methods=['GET'])
 def get_status(job_id):
-    conn = get_db_connection()
-    job = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
-    conn.close()
+    job = jobs_db.get(job_id)
     if job is None: return jsonify({'error': 'Job not found'}), 404
-    job_dict = dict(job)
-    return jsonify(job_dict)
-
-# --- Initialize Database on Startup ---
-with app.app_context():
-    init_db()
+    return jsonify(job)
 
 if __name__ == '__main__':
     app.run(debug=True)
